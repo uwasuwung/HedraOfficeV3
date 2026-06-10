@@ -33,12 +33,20 @@ import {
   Calendar,
   DollarSign,
   Activity,
-  Award
+  Award,
+  FileSpreadsheet,
+  Map
 } from "lucide-react";
 import { csharpCodeFiles } from "./data/csharpCode";
 import { DesaDataResponse, SqlQueryLog } from "./types";
 import { Toast, ToastContainer } from "./components/Toast";
+import VillageDocuments from "./components/VillageDocuments";
+import VillageServices from "./components/VillageServices";
+import VillagePPID from "./components/VillagePPID";
+import VillageMap from "./components/VillageMap";
+import VillagePublicPortal from "./components/VillagePublicPortal";
 import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ResponsiveContainer,
@@ -242,7 +250,7 @@ const detailedProgramData: Record<string, {
 };
 
 export default function App() {
-  const [activeMainTab, setActiveMainTab] = useState<"emulator" | "code">("emulator");
+  const [activeMainTab, setActiveMainTab] = useState<"emulator" | "code" | "public">("emulator");
   const [emulatorActiveTab, setEmulatorActiveTab] = useState<string>("dashboard");
   const [villageData, setVillageData] = useState<DesaDataResponse | null>(initialVillageData);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -469,6 +477,191 @@ export default function App() {
       "success",
       "Ekspor CSV Berhasil"
     );
+  };
+
+  // Export Data to Excel (.xlsx) using SheetJS
+  const handleExportExcel = () => {
+    if (!villageData) return;
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Profil & Demografi
+      const rawMetadata = [
+        ["LAPORAN PROFIL & STATISTIK KEPENDUDUKAN DESA PONDOK PANJANG"],
+        [`Waktu Berkas: ${new Date().toISOString().replace("T", " ").slice(0, 19)}`],
+        ["Sumber Data: Portal Resmi Desa & C# HttpClient Scraper Engine"],
+        [],
+        ["I. METADATA DESA"],
+        ["Atribut Wilayah", "Keterangan", "Satuan/Nilai"],
+        ["Nama Desa", villageData.villageMetadata.name, "Pemerintahan Mandiri"],
+        ["Kecamatan", villageData.villageMetadata.subdistrict, "Kecamatan"],
+        ["Kabupaten", villageData.villageMetadata.regency, "Kabupaten"],
+        ["Provinsi", villageData.villageMetadata.province, "Provinsi"],
+        ["Kepala Desa", villageData.villageMetadata.head.name, "Pamong Utama"],
+        [],
+        ["II. STATISTIK DEMOGRAFIS & GEOGRAFIS"],
+        ["Indikator Statistik", "Nilai", "Satuan"],
+        ["Luas Wilayah Kerja", parseFloat(villageData.stats.areaSize), "km²"],
+        ["Jumlah Kepala Keluarga (KK)", villageData.stats.families, "KK / Rumah Tangga"],
+        ["Batas Rukun Tetangga & Warga (RT/RW)", villageData.stats.rtrw, "Unit RT/RW"],
+        ["Laju Pertambahan Penduduk (Growth)", villageData.stats.growthRate, "% per Tahun"],
+        ["Jumlah Penduduk Laki-Laki", villageData.stats.malePopulation, "Jiwa"],
+        ["Jumlah Penduduk Perempuan", villageData.stats.femalePopulation, "Jiwa"],
+        ["Total Populasi Terdata (Spreadsheet Formula)", { f: "SUM(B19:B20)" }, "Jiwa"]
+      ];
+
+      const wsStats = XLSX.utils.aoa_to_sheet(rawMetadata);
+
+      // Adjust column widths for better visual layout
+      wsStats["!cols"] = [
+        { wch: 40 }, // Indicator
+        { wch: 25 }, // Value
+        { wch: 25 }  // Unit
+      ];
+
+      XLSX.utils.book_append_sheet(wb, wsStats, "Profil & Demografi");
+
+      // Sheet 2: APBDes Transparansi
+      const rawApbdes = [
+        ["TRANSPARANSI ALOKASI ANGGARAN APBDes"],
+        ["Tahun Anggaran: 2026"],
+        [],
+        ["Kategori Anggaran", "Persentase Kontribusi", "Jumlah Alokasi (Rupiah/IDR)"],
+        ...villageData.apbdes.map(item => [
+          item.category,
+          item.percentage / 100,
+          item.amount
+        ]),
+        ["Pagu Anggaran Terpakai (Total)", { f: "SUM(B5:B9)" }, { f: "SUM(C5:C9)" }]
+      ];
+
+      const wsApbdes = XLSX.utils.aoa_to_sheet(rawApbdes);
+
+      // Set Cell Types & Formats
+      for (let r = 4; r <= 9; r++) {
+        const cellB = wsApbdes[XLSX.utils.encode_cell({ r, c: 1 })];
+        if (cellB) {
+          cellB.t = "n";
+          cellB.z = "0%";
+        }
+        const cellC = wsApbdes[XLSX.utils.encode_cell({ r, c: 2 })];
+        if (cellC) {
+          cellC.t = "n";
+          cellC.z = '"Rp"#,##0';
+        }
+      }
+
+      wsApbdes["!cols"] = [
+        { wch: 30 },
+        { wch: 22 },
+        { wch: 28 }
+      ];
+
+      XLSX.utils.book_append_sheet(wb, wsApbdes, "Anggaran APBDes");
+
+      // Sheet 3: Rincian Kegiatan Prioritas
+      const rawPrograms = [
+        ["DAFTAR DAN ESTIMASI BIAYA PROGRAM PRIORITAS DESA"],
+        ["Fokus Rencana Pembangunan Jangka Menengah Desa (RPJMDes)"],
+        [],
+        ["Kode", "Nama Program Prioritas", "Status Pengerjaan", "Penerima Manfaat", "Estimasi Pagu Biaya (IDR)"],
+        ...villageData.priorityPrograms.map(p => {
+          const detail = detailedProgramData[p.code];
+          return [
+            p.code,
+            p.name,
+            p.status,
+            detail ? detail.pemberiManfaat : "Seluruh Warga",
+            p.cost
+          ];
+        }),
+        ["Pagu Estimasi Belanja Pembangunan", "", "", "", { f: "SUM(E5:E11)" }]
+      ];
+
+      const wsPrograms = XLSX.utils.aoa_to_sheet(rawPrograms);
+
+      for (let r = 4; r <= 11; r++) {
+        const cellE = wsPrograms[XLSX.utils.encode_cell({ r, c: 4 })];
+        if (cellE) {
+          cellE.t = "n";
+          cellE.z = '"Rp"#,##0';
+        }
+      }
+
+      wsPrograms["!cols"] = [
+        { wch: 10 }, // Code
+        { wch: 22 }, // Program Name
+        { wch: 18 }, // Status
+        { wch: 35 }, // Beneficiaries
+        { wch: 25 }  // Estimasi Cost
+      ];
+
+      XLSX.utils.book_append_sheet(wb, wsPrograms, "Program Prioritas");
+
+      // Sheet 4: Rincian Detail Anggaran Belanja Program (Sub-biaya/Daftar Belanja Mendalam!)
+      const rawDetailBudgets: any[][] = [
+        ["RINCIAN DETAIL ITEM ANGGARAN BELANJA PROGRAM"],
+        ["Teruraikan Berdasarkan Penjabaran Pagu Tiap Program Prioritas"],
+        [],
+        ["Kode Program", "Nama Program", "Uraian Pembelanjaan / Belanja Barang-Jasa", "Jumlah Alokasi Sub-Biaya (IDR)"]
+      ];
+
+      villageData.priorityPrograms.forEach(p => {
+        const detail = detailedProgramData[p.code];
+        if (detail && detail.budget) {
+          detail.budget.forEach(b => {
+            rawDetailBudgets.push([
+              p.code,
+              p.name,
+              b.item,
+              b.amount
+            ]);
+          });
+        }
+      });
+
+      const lastRowIdx = rawDetailBudgets.length; // Row total index
+      rawDetailBudgets.push([
+        "TOTAL DEPARTEMEN",
+        "Semua Sub-Detail Belanja Barang & Jasa (Formula)",
+        "",
+        { f: `SUM(D5:D${lastRowIdx})` }
+      ]);
+
+      const wsDetailedBudgets = XLSX.utils.aoa_to_sheet(rawDetailBudgets);
+
+      for (let r = 4; r <= lastRowIdx; r++) {
+        const cellD = wsDetailedBudgets[XLSX.utils.encode_cell({ r, c: 3 })];
+        if (cellD) {
+          cellD.t = "n";
+          cellD.z = '"Rp"#,##0';
+        }
+      }
+
+      wsDetailedBudgets["!cols"] = [
+        { wch: 15 },
+        { wch: 22 },
+        { wch: 65 },
+        { wch: 28 }
+      ];
+
+      XLSX.utils.book_append_sheet(wb, wsDetailedBudgets, "Detail Belanja Barang-Jasa");
+
+      XLSX.writeFile(wb, `Laporan_Statistik_Desa_Pondok_Panjang_${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+      addToast(
+        "Laporan Statistik Kependudukan, Alokasi RKAD, APBDes dan Detail Pembelanjaan Program sukses diekspor ke Microsoft Excel (.xlsx) dengan formula lengkap!",
+        "success",
+        "Ekspor Excel Sukses"
+      );
+    } catch (err: any) {
+      console.error("Gagal melakukan ekspor spreadsheet Excel: ", err);
+      addToast(
+        `Gagal mengekspor data ke Excel: ${err?.message || err}`,
+        "error",
+        "Ekspor Excel Gagal"
+      );
+    }
   };
 
   // Export Data to TXT
@@ -912,6 +1105,17 @@ export default function App() {
             Simulator Windows (WinForms)
           </button>
           <button
+            onClick={() => setActiveMainTab("public")}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg transition-all text-sm font-semibold cursor-pointer ${
+              activeMainTab === "public"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <Globe className="w-4 h-4 text-emerald-500 font-bold" />
+            Laman Mandiri Publik (Warga)
+          </button>
+          <button
             onClick={() => setActiveMainTab("code")}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg transition-all text-sm font-semibold cursor-pointer ${
               activeMainTab === "code"
@@ -973,6 +1177,14 @@ export default function App() {
                       Eksport CSV
                     </button>
                   </div>
+
+                  <button
+                    onClick={handleExportExcel}
+                    className="flex items-center gap-1.5 bg-emerald-55/70 hover:bg-emerald-100 text-emerald-850 border border-emerald-250/70 px-3 py-1.5 text-xs font-semibold rounded cursor-pointer select-none shadow-xs transition-colors"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-650" />
+                    Eksport Excel (.xlsx)
+                  </button>
 
                   <button
                     onClick={handleExportTXT}
@@ -1086,6 +1298,60 @@ export default function App() {
                     Dokumentasi Desa
                   </button>
 
+                  <button
+                    onClick={() => setEmulatorActiveTab("map")}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium text-left cursor-pointer transition ${
+                      emulatorActiveTab === "map"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-300 hover:bg-slate-700/60 hover:text-white"
+                    }`}
+                  >
+                    <Map className="w-4 h-4 shrink-0 text-cyan-400" />
+                    Peta Digital Desa
+                  </button>
+
+                  <div className="border-t border-slate-700 my-2" />
+
+                  <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-2 px-2 uppercase font-mono">
+                    Layanan & Birokrasi Digital
+                  </div>
+
+                  <button
+                    onClick={() => setEmulatorActiveTab("persuratan")}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium text-left cursor-pointer transition ${
+                      emulatorActiveTab === "persuratan"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-300 hover:bg-slate-700/60 hover:text-white"
+                    }`}
+                  >
+                    <FileText className="w-4 h-4 shrink-0 text-blue-400" />
+                    Pelayanan Persuratan (.docx)
+                  </button>
+
+                  <button
+                    onClick={() => setEmulatorActiveTab("warga")}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium text-left cursor-pointer transition ${
+                      emulatorActiveTab === "warga"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-300 hover:bg-slate-700/60 hover:text-white"
+                    }`}
+                  >
+                    <Users className="w-4 h-4 shrink-0 text-amber-400" />
+                    Layanan Pajak PBB & Aduan
+                  </button>
+
+                  <button
+                    onClick={() => setEmulatorActiveTab("ppid")}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium text-left cursor-pointer transition ${
+                      emulatorActiveTab === "ppid"
+                        ? "bg-blue-605 text-white shadow-xs"
+                        : "text-slate-300 hover:bg-slate-700/60 hover:text-white"
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-4 h-4 shrink-0 text-emerald-400" />
+                    Arsip PPID, JDIH & Berita
+                  </button>
+
                   <div className="border-t border-slate-700 my-2" />
 
                   <div className="text-[10px] font-bold text-slate-400 tracking-wider mb-2 px-2 uppercase font-mono">
@@ -1133,7 +1399,7 @@ export default function App() {
                 </aside>
 
                 {/* Simulated Viewer Area */}
-                <div className="flex-1 bg-slate-50 overflow-y-auto p-5 relative">
+                <div className="flex-1 bg-slate-50 overflow-y-auto overflow-x-hidden p-5 relative">
                   
                   {isLoading && (
                     <div className="absolute top-4 right-4 bg-blue-50 border border-blue-200/80 backdrop-blur-xs text-blue-700 text-[10px] font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center gap-1.5 z-40 animate-pulse font-mono">
@@ -1149,16 +1415,17 @@ export default function App() {
                       <p className="text-slate-500 text-sm">Menghubungkan scraping dan database lokal</p>
                     </div>
                   ) : (
-                    <>
+                    <AnimatePresence mode="wait">
                       {/* SUBTABS SECTION */}
                       
                       {/* ================= emulatorActiveTab: DASHBOARD ================= */}
                       {emulatorActiveTab === "dashboard" && (
                         <motion.div
                           key="dashboard"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6 text-slate-855"
                         >
                           
@@ -1420,9 +1687,10 @@ export default function App() {
                       {emulatorActiveTab === "stats" && (
                         <motion.div
                           key="stats"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -1641,9 +1909,10 @@ export default function App() {
                       {emulatorActiveTab === "apbdes" && (
                         <motion.div
                           key="apbdes"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -1741,9 +2010,10 @@ export default function App() {
                       {emulatorActiveTab === "programs" && (
                         <motion.div
                           key="programs"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -1804,9 +2074,10 @@ export default function App() {
                       {emulatorActiveTab === "kades" && (
                         <motion.div
                           key="kades"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -1857,9 +2128,10 @@ export default function App() {
                       {emulatorActiveTab === "gallery" && (
                         <motion.div
                           key="gallery"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -1896,13 +2168,110 @@ export default function App() {
                         </motion.div>
                       )}
 
+                      {/* ================= emulatorActiveTab: MAP ================= */}
+                      {emulatorActiveTab === "map" && (
+                        <motion.div
+                          key="map"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="space-y-6"
+                        >
+                          <div className="border-b border-slate-200 pb-3 text-left">
+                            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                              <Map className="w-5 h-5 text-blue-605" />
+                              Peta GIS Digital & Regulasi Batas Sektoral Desa
+                            </h2>
+                            <p className="text-xs text-slate-505 mt-1">
+                              Monitoring sebaran geografis 74 RT/RW Pondok Panjang secara real-time, lokasi program kerja APBDes strategis, hingga pengaduan warga berbasis koordinat satelit.
+                            </p>
+                          </div>
+
+                          <VillageMap villageData={villageData} addToast={addToast} />
+                        </motion.div>
+                      )}
+
+                      {/* ================= emulatorActiveTab: PERSURATAN ================= */}
+                      {emulatorActiveTab === "persuratan" && (
+                        <motion.div
+                          key="persuratan"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="space-y-6 text-left"
+                        >
+                          <div className="border-b border-slate-200 pb-3">
+                            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                              <FileText className="w-5 h-5 text-blue-600" />
+                              Pelayanan Tata Persuratan & Dokumen Resmi
+                            </h2>
+                            <p className="text-xs text-slate-505 mt-1">
+                              Isi draf isian formulir di kolom sebelah kiri, tinjau hasil visual format orisinal di panel pratinjau sebelah kanan, dan ekspor langsung draf ke dokumen Microsoft Word (.doc/.docx komparasi) secara instan.
+                            </p>
+                          </div>
+
+                          <VillageDocuments villageData={villageData} addToast={addToast} />
+                        </motion.div>
+                      )}
+
+                      {/* ================= emulatorActiveTab: WARGA ================= */}
+                      {emulatorActiveTab === "warga" && (
+                        <motion.div
+                          key="warga"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="space-y-6 text-left"
+                        >
+                          <div className="border-b border-slate-200 pb-3">
+                            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                              <Users className="w-5 h-5 text-amber-500" />
+                              Layanan Mandiri Warga & PBB-P2 
+                            </h2>
+                            <p className="text-xs text-slate-505 mt-1">
+                              Masukkan kode NOP Pajak untuk melihat tagihan PBB, layangkan aduan dengan unggah foto lampiran otentik, atau sampaikan pelaporan sensus kemandirian demografi (Kelahiran/Wafat/Mutasi).
+                            </p>
+                          </div>
+
+                          <VillageServices villageData={villageData} setVillageData={setVillageData} addToast={addToast} />
+                        </motion.div>
+                      )}
+
+                      {/* ================= emulatorActiveTab: PPID ================= */}
+                      {emulatorActiveTab === "ppid" && (
+                        <motion.div
+                          key="ppid"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="space-y-6 text-left"
+                        >
+                          <div className="border-b border-slate-200 pb-3">
+                            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                              <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                              Transparansi Publik PPID, JDIH, & Kantor Redaksi
+                            </h2>
+                            <p className="text-xs text-slate-505 mt-1">
+                              Unduh berkas pertanggungjawaban APBDes, lacak Peraturan Desa (Perdes) pimpinan kemenham, atau koordinasikan siaran berita instan agar langsung berkontribusi di dashboard.
+                            </p>
+                          </div>
+
+                          <VillagePPID villageData={villageData} setVillageData={setVillageData} addToast={addToast} />
+                        </motion.div>
+                      )}
+
                       {/* ================= emulatorActiveTab: WEBVIEW ================= */}
                       {emulatorActiveTab === "webview" && (
                         <motion.div
                           key="webview"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-4 h-full flex flex-col justify-between"
                         >
                           <div className="border-b border-slate-200 pb-3 shrink-0">
@@ -1970,9 +2339,10 @@ export default function App() {
                       {emulatorActiveTab === "sqlite" && (
                         <motion.div
                           key="sqlite"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
                           className="space-y-6"
                         >
                           <div className="border-b border-slate-200 pb-3">
@@ -2061,7 +2431,7 @@ export default function App() {
                         </motion.div>
                       )}
 
-                    </>
+                    </AnimatePresence>
                   )}
 
                 </div>
@@ -2088,6 +2458,29 @@ export default function App() {
             </div>
 
           </div>
+        )}
+
+        {/* ================================== TAB 3: PUBLIC MOUNT ================================== */}
+        {activeMainTab === "public" && (
+          <motion.div
+            key="public_portal"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="flex-1 overflow-auto p-4 md:p-6 lg:p-8 flex items-start justify-center bg-slate-100"
+          >
+            <div className="w-full max-w-6xl">
+              <VillagePublicPortal
+                villageData={villageData}
+                addToast={addToast}
+                onNavigateToAdminDocs={() => {
+                  setActiveMainTab("emulator");
+                  setEmulatorActiveTab("persuratan");
+                }}
+              />
+            </div>
+          </motion.div>
         )}
 
         {/* ================================== TAB 2: CODE GENERATOR ================================== */}
