@@ -1,0 +1,6 @@
+{
+  "name": "hedra-office-v3",
+  "description": "Generator dan Simulator C# Desktop App untuk data desa Pondok Panjang (.NET Windows Forms, WebView2, SQLite, dan Scraper)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
